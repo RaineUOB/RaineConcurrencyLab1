@@ -2,9 +2,11 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"image"
 	"image/jpeg"
 	"image/png"
+	"math"
 	"os"
 	"sort"
 )
@@ -101,6 +103,11 @@ func flattenImage(image [][]uint8) []uint8 {
 	return flattenedImage
 }
 
+func worker(startY, endY, startX, endX int, data func(y, x int) uint8, out chan<- [][]uint8) {
+	var newPixelData = medianFilter(startY, endY, startX, endX, data)
+	out <- newPixelData
+}
+
 // filter reads in a png image, applies the filter and outputs the result as a png image.
 // filter is the function called by the tests in medianfilter_test.go
 func filter(filepathIn, filepathOut string, threads int) {
@@ -114,12 +121,36 @@ func filter(filepathIn, filepathOut string, threads int) {
 
 	immutableData := makeImmutableMatrix(getPixelData(img))
 	var newPixelData [][]uint8
-	
+
 	if threads == 1 {
 		newPixelData = medianFilter(0, height, 0, width, immutableData)
 	} else {
-		panic("TODO Implement me")
+
+		imgChan := []chan [][]uint8{}
+		var subHeight = int(math.Floor(float64(height) / float64(threads)))
+		var diff = height - (subHeight * threads)
+		var radius = 2
+		var workingHeight = 0
+
+		//fmt.Print("height", height, " working height", workingHeight, " slice", subHeight)
+
+		for i := 0; i < threads; i++ {
+			subChan := make(chan [][]uint8)
+			imgChan = append(imgChan, subChan)
+			go worker(workingHeight, workingHeight+subHeight+diff, 0, width, immutableData, subChan)
+
+			workingHeight += subHeight + diff - radius
+			diff = 0
+			//radius = 2
+		}
+		for i := 0; i < threads; i++ {
+			var part = <-imgChan[i]
+			newPixelData = append(newPixelData, part...)
+		}
+		//fmt.Print("height", height, " working height", workingHeight, " slice", subHeight)
+
 	}
+	fmt.Print("\n")
 
 	imout := image.NewGray(image.Rect(0, 0, width, height))
 	imout.Pix = flattenImage(newPixelData)
